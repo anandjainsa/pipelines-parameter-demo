@@ -1,0 +1,88 @@
+@Library('pstsharedlibrary')_
+
+pipeline {
+
+    agent any
+//    agent {
+//        label "nodename"
+//    }
+    parameters { 
+         choice(name: 'Fortify_Version', choices: ['19.2.0', '4.30'], description: 'Select a Fortify Version')
+         booleanParam(name: 'QA_DEPLOY', defaultValue: false, description: 'To Deploy on QA Environment')
+
+    } 
+    tools {
+        //jdk "java1.8"
+        //maven  "maven3"
+        maven "Maven-3.3.3"
+    }
+
+    environment {
+        // Example: PORT = "8080"
+        PORT = "8080"
+        // Example: TOMCAT_IP = "172.16.82.68"
+        TOMCAT_IP = "172.16.82.68"
+        // Example: APP_WAR_NAME = "crewpro#autodial"
+        APP_WAR_NAME = "crewpro#autodial"
+        // Example: warPath = "/crewpro/autodial"
+        warPath = "/crewpro/autodial"
+    }
+    
+    options {
+        // Only keep the 10 most recent builds
+        buildDiscarder(logRotator(numToKeepStr:'2'))
+    }
+    stages {
+        stage ('Build') {
+            steps {
+                // build
+                mavenBuild();
+            }
+ //           post {
+  //             success {
+    //                // we only worry about archiving the jar file if the build steps are successful
+      //              archiveArtifacts(artifacts: '**/target/*.war', allowEmptyArchive: true)
+        //        }
+          //   }
+         }
+        stage('Deploy to Dev'){
+            steps {
+                //Deploying Application to tomcat server
+                appDeploy("${TOMCAT_IP}","${PORT}","${warPath}","${APP_WAR_NAME}");
+            }
+        }
+        stage('Scanning Code - Fortify '){
+            steps {
+                //Verifying Fortify Scan Results
+                fortifyScan("${params.Fortify_Version}");
+            }
+        }
+        stage('Validating Fortify Scan Results '){
+         when {
+          expression {
+               return params.QA_DEPLOY
+               }
+             }
+            steps {
+                //Verifying Fortify Scan Results
+                fortifyScanValidation("${params.Fortify_Version}");
+            }
+        }
+        stage('Deploy to QA'){
+         when {
+          expression {
+               return params.QA_DEPLOY
+               }
+             }
+            steps {
+                //Deploying Application to tomcat server
+                appDeploy("${TOMCAT_IP}","${PORT}","${warPath}","${APP_WAR_NAME}");
+            }
+        }
+    }
+    post {
+        always {
+            sendNotifications("currentBuild.result")
+        }
+    }
+}
