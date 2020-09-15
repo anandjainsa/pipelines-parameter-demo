@@ -1,0 +1,132 @@
+final String warName = "crewpro#timekeeping#class-of-time.war"
+final String webContextPath = "/crewpro/timekeeping/class-of-time"
+final String devHost = "tomcat@172.16.82.70:8081"
+final String qaHost = "tomcat@172.16.82.5:8081"
+final String devSupportHost = "tomcat@172.16.82.86:8081"
+final String qaSupportHost = "tomcat@172.16.82.65:8081"
+final String crudServiceBranchName=""
+final String processServiceBranchName=""
+final String warBuildBranchName=""
+final String deployHostName=""
+final String fortifyVersion = "19.2.0"
+
+
+node {
+    stage("${envToDeploy}"){
+        if ("${envToDeploy}" == 'DEV'){
+            deployHostName = "${devHost}"
+            crudServiceBranchName = "${crudBranchName}"
+            processServiceBranchName = "${processBranchName}"
+            warBuildBranchName="${warBranchName}"
+        }
+        if ("${envToDeploy}" == 'QA'){
+            deployHostName = "${qaHost}"
+            crudServiceBranchName = 'ns-cot-release2'
+            processServiceBranchName = 'ns-cot-release2'
+            warBuildBranchName='ns-cot-release2'
+
+        }
+        if ("${envToDeploy}" == 'DEVSupport'){
+            deployHostName = "${devSupportHost}"
+            crudServiceBranchName = "${crudBranchName}"
+            processServiceBranchName = "${processBranchName}"
+            warBuildBranchName="${warBranchName}"
+        }
+        if ("${envToDeploy}" == 'QASupport'){
+            deployHostName = "${qaSupportHost}"
+            crudServiceBranchName = 'ns-uat-release'
+            processServiceBranchName = 'ns-uat-release'
+            warBuildBranchName='ns-uat-release'
+        }
+        echo "${deployHostName} ==>  ${crudServiceBranchName} ==> ${processServiceBranchName} ==>  ${warBuildBranchName}"
+
+    }
+    stage ('checkout') {
+        dir('cot-crud-service') {
+            git branch: "${crudServiceBranchName}",
+                credentialsId: 'c4efea5e-b719-43cc-a37f-',
+                url: 'https://github.com/anandjainsa/pipelines-parameter-demo-services.git'
+        }
+        dir('cot-process-service') {
+            git branch: "${processServiceBranchName}",
+                credentialsId: 'c4efea5e-b719-43cc-a37f-',
+                url: 'https://github.com/anandjainsa/pipelines-parameter-demo-process-services.git'
+        }
+
+        dir('cot-war') {
+            git branch: "${warBuildBranchName}",
+                credentialsId: 'c4efea5e-b719-43cc-a37f-',
+                url: 'https://github.com/anandjainsa/pipelines-parameter-demo-cot-war.git'
+        }
+
+        dir('./cot-ear') {
+            git branch: 'development',
+                credentialsId: 'c4efea5e-b719-43cc-a37f-9038ed362532',
+                url: 'https://github.com/anandjainsa/pipelines-parameter-demo.git'
+        }
+
+    }
+    stage ('build') {
+        def mvnHome = tool name: 'Maven-3.3.3', type:'maven'
+
+        sh("${mvnHome}/bin/mvn clean install -Dmaven.test.skip=true -f cot-crud-service")
+        sh("${mvnHome}/bin/mvn clean install -Dmaven.test.skip=true -f cot-process-service")
+		sh("${mvnHome}/bin/mvn clean install -Dmaven.test.skip=true -f cot-war")
+		sh("${mvnHome}/bin/mvn clean install -Dmaven.test.skip=true -f cot-ear")
+
+    }
+
+
+    stage ("Deploy To ${deployHostName}") {
+
+       sh "curl -u  tomcat:c2wtomcat ${deployHostName}/manager/text/undeploy?path=${webContextPath}"
+		sh "curl --upload-file cot-war/target/${warName} -u tomcat:c2wtomcat ${deployHostName}/manager/text/deploy?path=${webContextPath}"
+
+	}
+
+    stage('Fortify Scan Crud Services') {
+            def mvnHome = tool name: 'Maven-3.3.3', type:'maven'
+    
+            sh "${mvnHome}/bin/mvn clean package -U -Prun-fortify  -Dmaven.test.skip=true -f cot-crud-service"
+            sh "echo 'validate'"
+            script {
+                def linesCritical = sh(script: "/opt/software/HP_Fortify_SCA_and_Apps_${fortifyVersion}/bin/FPRUtility -project cot-crud-service/target/*.fpr -information -search -query \"[fortify priority order]:critical\"", returnStdout: true).trim()
+                def linesHigh = sh(script: "/opt/software/HP_Fortify_SCA_and_Apps_${fortifyVersion}/bin/FPRUtility -project cot-crud-service/target/*.fpr -information -search -query \"[fortify priority order]:high\"", returnStdout: true).trim()
+
+                echo "${linesCritical}"
+                echo "${linesHigh}"
+
+                if (!linesCritical.contains("No issues matched search query.")) {
+                    error("Build failed because of critical issue")
+                }
+                if (!linesHigh.contains("No issues matched search query.")) {
+                    error("Build failed because of critical issue")
+                }
+
+                archiveArtifacts "cot-crud-service/target/*.pdf"
+            }
+        }
+    stage('Fortify Scan Process Services') {
+            def mvnHome = tool name: 'Maven-3.3.3', type:'maven'
+
+            sh "${mvnHome}/bin/mvn clean package -U -Prun-fortify  -Dmaven.test.skip=true -f cot-process-service"
+            sh "echo 'validate'"
+            script {
+                def linesCritical = sh(script: "/opt/software/HP_Fortify_SCA_and_Apps_${fortifyVersion}/bin/FPRUtility -project cot-process-service/target/*.fpr -information -search -query \"[fortify priority order]:critical\"", returnStdout: true).trim()
+                def linesHigh = sh(script: "/opt/software/HP_Fortify_SCA_and_Apps_${fortifyVersion}/bin/FPRUtility -project cot-process-service/target/*.fpr -information -search -query \"[fortify priority order]:high\"", returnStdout: true).trim()
+
+                echo "${linesCritical}"
+                echo "${linesHigh}"
+
+                if (!linesCritical.contains("No issues matched search query.")) {
+                    error("Build failed because of critical issue")
+                }
+                if (!linesHigh.contains("No issues matched search query.")) {
+                    error("Build failed because of critical issue")
+                }
+
+                archiveArtifacts "cot-process-service/target/*.pdf"
+        }
+    }
+
+}
